@@ -1,26 +1,24 @@
+// services/transaction-service/services/transactionService.js
+
 const { sequelize } = require("../../../shared/config/db");
+const { Op } = require("sequelize");
 
 const Account = require("../../account-service/models/account.model");
 const Transaction = require("../models/transaction.model");
 const User = require("../../user-service/models/user.model");
 
-const { Op } = require("sequelize");
-
 /**
- * 🏦 ACCOUNT RULES
+ * ACCOUNT RULES
  */
 const ACCOUNT_RULES = {
-
   savings: {
     minDeposit: 1000,
     maxBalance: 500000000, // ₹50 Crore
   },
-
   current: {
     minDeposit: 5000,
     maxBalance: null,
   },
-
   salary: {
     minDeposit: 0,
     maxBalance: null,
@@ -28,260 +26,204 @@ const ACCOUNT_RULES = {
 };
 
 /**
- * 🔐 OWNERSHIP VALIDATION
+ * BLOCKED ACCOUNT STATUSES
  */
-async function validateOwnership(account, user_id) {
+const BLOCKED_STATUSES = [
+  "closed",
+  "frozen",
+  "blocked",
+  "inactive",
+  "suspended",
+];
 
+/**
+ * SAFE ROUNDING
+ */
+function roundAmount(value) {
+  return parseFloat(Number(value).toFixed(2));
+}
+
+/**
+ * VALIDATE ACCOUNT OWNERSHIP AND STATUS
+ */
+function validateOwnership(account, userId) {
   if (!account) {
     throw new Error("Account not found.");
   }
 
-  if (account.user_id !== user_id) {
-    throw new Error(
-      "Unauthorized access to this account."
-    );
+  if (account.user_id !== userId) {
+    throw new Error("Unauthorized access to this account.");
   }
 
-  if (
-    ["closed", "frozen", "blocked", "inactive"]
-      .includes(account.status)
-  ) {
-    throw new Error(
-      `Account is ${account.status}.`
-    );
+  if (BLOCKED_STATUSES.includes(account.status)) {
+    throw new Error(`Account is ${account.status}.`);
   }
 }
 
 /**
- * 💰 SAFE ROUNDING
+ * VALIDATE RECEIVER ACCOUNT STATUS
  */
-function roundAmount(value) {
+function validateReceiverAccount(account) {
+  if (!account) {
+    throw new Error("Receiver account does not exist.");
+  }
 
-  return parseFloat(
-    Number(value).toFixed(2)
-  );
+  if (BLOCKED_STATUSES.includes(account.status)) {
+    throw new Error(`Receiver account is ${account.status}.`);
+  }
 }
 
 /**
- * 🔢 VALIDATE AMOUNT
+ * VALIDATE AMOUNT
  */
 function validateAmount(amount) {
-
-  if (
-    amount === undefined ||
-    amount === null ||
-    amount === ""
-  ) {
-    throw new Error(
-      "Amount is required."
-    );
+  if (amount === undefined || amount === null || amount === "") {
+    throw new Error("Amount is required.");
   }
 
-  if (isNaN(amount)) {
-    throw new Error(
-      "Invalid amount."
-    );
+  const amountStr = String(amount).trim();
+
+  // Only positive numbers with max 2 decimals
+  if (!/^\d+(\.\d{1,2})?$/.test(amountStr)) {
+    if (/^\d+\.\d{3,}$/.test(amountStr)) {
+      throw new Error("Maximum 2 decimal places allowed.");
+    }
+    throw new Error("Only valid numbers are allowed.");
   }
 
-  amount = roundAmount(amount);
+  const numericAmount = Number(amountStr);
 
-  if (amount <= 0) {
-    throw new Error(
-      "Amount must be greater than 0."
-    );
+  if (numericAmount <= 0) {
+    throw new Error("Amount should be greater than 0.");
   }
 
-  /**
-   * MAX 2 DECIMALS
-   */
-  const decimalRegex =
-    /^\d+(\.\d{1,2})?$/;
-
-  if (
-    !decimalRegex.test(
-      String(amount)
-    )
-  ) {
-    throw new Error(
-      "Amount can have maximum 2 decimal places."
-    );
+  // Max single transaction = ₹1 Crore
+  if (numericAmount > 10000000) {
+    throw new Error("Maximum single transaction limit is ₹1,00,00,000.");
   }
 
-  /**
-   * MAX SINGLE TXN
-   */
-  if (amount > 10000000) {
-    throw new Error(
-      "Maximum single transaction limit is ₹1 crore."
-    );
-  }
-
-  return amount;
+  return roundAmount(numericAmount);
 }
 
 /**
- * 🔥 TRANSFER ORCHESTRATOR
+ * GET RECIPIENT NAME FROM ACCOUNT
+ */
+async function getRecipientName(account, transaction) {
+  if (!account) return "Unknown";
+
+  const user = await User.findOne({
+    where: {
+      user_id: account.user_id,
+    },
+    transaction,
+  });
+
+  return user?.full_name || "Unknown";
+}
+
+/**
+ * TRANSFER ORCHESTRATOR
  */
 async function initiateTransfer(data) {
-
   switch (data.transaction_type) {
-
     case "internal":
-      return processInternalTransfer(data);
+      return processTransfer(data, "internal");
 
     case "imps":
-      return processIMPS(data);
+      return processTransfer(data, "imps");
 
     case "neft":
-      return processNEFT(data);
+      return processTransfer(data, "neft");
 
     case "rtgs":
-      return processRTGS(data);
+      if (Number(data.amount) < 200000) {
+        throw new Error("RTGS minimum amount is ₹2,00,000.");
+      }
+      return processTransfer(data, "rtgs");
 
     default:
-      throw new Error(
-        "Invalid transaction type"
-      );
+      throw new Error("Invalid transaction type.");
   }
 }
 
 /**
- * ✅ INTERNAL TRANSFER
+ * COMMON TRANSFER LOGIC
  */
-async function processInternalTransfer({
-  from_account_number,
-  to_account_number,
-  amount,
-  user_id
-}) {
-
+async function processTransfer(
+  {
+    from_account_number,
+    to_account_number,
+    amount,
+    user_id,
+  },
+  transactionType
+) {
   const t = await sequelize.transaction();
 
   try {
-
-    /**
-     * VALIDATE AMOUNT
-     */
     amount = validateAmount(amount);
 
-    /**
-     * SENDER
-     */
+    // Fetch sender
     const sender = await Account.findOne({
-
       where: {
-        account_number:
-          from_account_number
+        account_number: from_account_number,
       },
-
       transaction: t,
-
       lock: t.LOCK.UPDATE,
     });
 
-    /**
-     * RECEIVER
-     */
+    validateOwnership(sender, user_id);
+
+    // Fetch receiver
     const receiver = await Account.findOne({
-
       where: {
-        account_number:
-          to_account_number
+        account_number: to_account_number,
       },
-
       transaction: t,
-
       lock: t.LOCK.UPDATE,
     });
 
-    /**
-     * VALIDATE OWNER
-     */
-    await validateOwnership(
-      sender,
-      user_id
-    );
+    validateReceiverAccount(receiver);
 
-    /**
-     * RECEIVER EXISTS
-     */
-    if (!receiver) {
-      throw new Error(
-        "Receiver account does not exist."
-      );
-    }
-
-    /**
-     * BLOCK RECEIVER STATUS
-     */
-    if (
-      ["closed", "frozen", "blocked", "inactive"]
-        .includes(receiver.status)
-    ) {
-      throw new Error(
-        `Receiver account is ${receiver.status}.`
-      );
-    }
-
-    /**
-     * BLOCK SELF TRANSFER
-     */
+    // Prevent self transfer
     if (
       sender.account_number ===
       receiver.account_number
     ) {
-      throw new Error(
-        "Self transfer is not allowed."
-      );
+      throw new Error("Self transfer is not allowed.");
     }
 
-    /**
-     * SUFFICIENT BALANCE
-     */
+    // Sufficient balance
     if (
-      roundAmount(
-        sender.available_balance
-      ) < amount
+      roundAmount(sender.available_balance) <
+      amount
     ) {
-      throw new Error(
-        "Insufficient balance."
-      );
+      throw new Error("Insufficient balance.");
     }
 
-    /**
-     * MINIMUM BALANCE CHECK
-     */
-    const remainingBalance =
-      roundAmount(
-        Number(sender.available_balance) -
-        amount
-      );
+    // Minimum balance check
+    const remainingBalance = roundAmount(
+      Number(sender.available_balance) - amount
+    );
 
-    const minimumBalance =
-      Number(sender.min_balance || 0);
+    const minimumBalance = Number(
+      sender.min_balance || 0
+    );
 
-    if (
-      remainingBalance <
-      minimumBalance
-    ) {
+    if (remainingBalance < minimumBalance) {
       throw new Error(
         `Minimum balance of ₹${minimumBalance} must be maintained.`
       );
     }
 
-    /**
-     * SAVINGS MAX BALANCE
-     */
+    // Savings max balance check
     if (
-      receiver.account_type ===
-      "savings"
+      receiver.account_type === "savings" &&
+      ACCOUNT_RULES.savings.maxBalance !== null
     ) {
-
-      const updatedBalance =
-        roundAmount(
-          Number(receiver.balance) +
-          amount
-        );
+      const updatedBalance = roundAmount(
+        Number(receiver.balance) + amount
+      );
 
       if (
         updatedBalance >
@@ -293,244 +235,95 @@ async function processInternalTransfer({
       }
     }
 
-    /**
-     * RECEIVER USER
-     */
-    const receiverUser =
-      await User.findOne({
+    // Recipient name
+    const recipientName = await getRecipientName(
+      receiver,
+      t
+    );
 
-        where: {
-          user_id:
-            receiver.user_id
-        },
+    // Debit sender
+    sender.balance = roundAmount(
+      Number(sender.balance) - amount
+    );
 
+    sender.available_balance = roundAmount(
+      Number(sender.available_balance) - amount
+    );
+
+    // Credit receiver
+    receiver.balance = roundAmount(
+      Number(receiver.balance) + amount
+    );
+
+    receiver.available_balance = roundAmount(
+      Number(receiver.available_balance) + amount
+    );
+
+    await sender.save({ transaction: t });
+    await receiver.save({ transaction: t });
+
+    // Create transaction
+    const txn = await Transaction.create(
+      {
+        from_account_id: sender.account_id,
+        to_account_id: receiver.account_id,
+        recipient_name: recipientName,
+        amount,
+        transaction_type: transactionType,
+        status: "success",
+        reference_id: `TXN-${Date.now()}`,
+      },
+      {
         transaction: t,
-      });
+      }
+    );
 
-    /**
-     * RECIPIENT NAME
-     */
-    const recipientName =
-      receiverUser?.full_name ||
-      "Unknown";
-
-    /**
-     * EXACT DEBIT
-     */
-    sender.balance =
-      roundAmount(
-        Number(sender.balance) -
-        amount
-      );
-
-    sender.available_balance =
-      roundAmount(
-        Number(sender.available_balance) -
-        amount
-      );
-
-    /**
-     * EXACT CREDIT
-     */
-    receiver.balance =
-      roundAmount(
-        Number(receiver.balance) +
-        amount
-      );
-
-    receiver.available_balance =
-      roundAmount(
-        Number(receiver.available_balance) +
-        amount
-      );
-
-    /**
-     * SAVE ACCOUNTS
-     */
-    await sender.save({
-      transaction: t
-    });
-
-    await receiver.save({
-      transaction: t
-    });
-
-    /**
-     * CREATE TXN
-     */
-    const txn =
-      await Transaction.create(
-
-        {
-          from_account_id:
-            sender.account_id,
-
-          to_account_id:
-            receiver.account_id,
-
-          recipient_name:
-            recipientName,
-
-          amount,
-
-          transaction_type:
-            "internal",
-
-          status:
-            "success",
-
-          reference_id:
-            `TXN-${Date.now()}`
-        },
-
-        {
-          transaction: t
-        }
-      );
-
-    /**
-     * COMMIT
-     */
     await t.commit();
 
     return txn;
-
   } catch (err) {
-
-    /**
-     * ROLLBACK
-     */
     await t.rollback();
-
-    console.error(
-      "TRANSFER ERROR:",
-      err
-    );
-
+    console.error("TRANSFER ERROR:", err.message);
     throw err;
   }
 }
 
 /**
- * ⚡ IMPS
- */
-async function processIMPS(data) {
-
-  const txn =
-    await processInternalTransfer(data);
-
-  txn.transaction_type = "imps";
-
-  await txn.save();
-
-  return txn;
-}
-
-/**
- * 🕒 NEFT
- */
-async function processNEFT(data) {
-
-  await new Promise(resolve =>
-    setTimeout(resolve, 2000)
-  );
-
-  const txn =
-    await processInternalTransfer(data);
-
-  txn.transaction_type = "neft";
-
-  await txn.save();
-
-  return txn;
-}
-
-/**
- * 💰 RTGS
- */
-async function processRTGS(data) {
-
-  if (data.amount < 200000) {
-
-    throw new Error(
-      "RTGS requires minimum ₹2,00,000"
-    );
-  }
-
-  const txn =
-    await processInternalTransfer(data);
-
-  txn.transaction_type = "rtgs";
-
-  await txn.save();
-
-  return txn;
-}
-
-/**
- * 💰 DEPOSIT
+ * DEPOSIT
  */
 async function depositMoney({
   account_number,
   amount,
-  user_id
+  user_id,
 }) {
-
   const t = await sequelize.transaction();
 
   try {
+    amount = validateAmount(amount);
 
-    /**
-     * VALIDATE AMOUNT
-     */
-    amount =
-      validateAmount(amount);
-
-    /**
-     * LIMIT
-     */
+    // Deposit max limit
     if (amount > 1000000) {
-      throw new Error(
-        "Maximum deposit limit is ₹10,00,000."
-      );
+      throw new Error("Maximum deposit limit is ₹10,00,000.");
     }
 
-    /**
-     * ACCOUNT
-     */
-    const account =
-      await Account.findOne({
+    const account = await Account.findOne({
+      where: {
+        account_number,
+      },
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
 
-        where: {
-          account_number
-        },
+    validateOwnership(account, user_id);
 
-        transaction: t,
-
-        lock: t.LOCK.UPDATE,
-      });
-
-    /**
-     * VALIDATE OWNER
-     */
-    await validateOwnership(
-      account,
-      user_id
-    );
-
-    /**
-     * SAVINGS MAX BALANCE
-     */
+    // Savings max balance
     if (
-      account.account_type ===
-      "savings"
+      account.account_type === "savings" &&
+      ACCOUNT_RULES.savings.maxBalance !== null
     ) {
-
-      const updatedBalance =
-        roundAmount(
-          Number(account.balance) +
-          amount
-        );
+      const updatedBalance = roundAmount(
+        Number(account.balance) + amount
+      );
 
       if (
         updatedBalance >
@@ -542,340 +335,192 @@ async function depositMoney({
       }
     }
 
-    /**
-     * USER
-     */
-    const user =
-      await User.findOne({
+    const recipientName = await getRecipientName(
+      account,
+      t
+    );
 
-        where: {
-          user_id:
-            account.user_id
-        },
+    // Update balance
+    account.balance = roundAmount(
+      Number(account.balance) + amount
+    );
 
+    account.available_balance = roundAmount(
+      Number(account.available_balance) + amount
+    );
+
+    await account.save({ transaction: t });
+
+    const txn = await Transaction.create(
+      {
+        to_account_id: account.account_id,
+        recipient_name: recipientName,
+        amount,
+        transaction_type: "deposit",
+        status: "success",
+        reference_id: `TXN-${Date.now()}`,
+      },
+      {
         transaction: t,
-      });
-
-    /**
-     * EXACT CREDIT
-     */
-    account.balance =
-      roundAmount(
-        Number(account.balance) +
-        amount
-      );
-
-    account.available_balance =
-      roundAmount(
-        Number(account.available_balance) +
-        amount
-      );
-
-    /**
-     * SAVE
-     */
-    await account.save({
-      transaction: t
-    });
-
-    /**
-     * TRANSACTION
-     */
-    const txn =
-      await Transaction.create(
-
-        {
-          to_account_id:
-            account.account_id,
-
-          recipient_name:
-            user?.full_name ||
-            "Self",
-
-          amount,
-
-          transaction_type:
-            "deposit",
-
-          status:
-            "success",
-
-          reference_id:
-            `TXN-${Date.now()}`
-        },
-
-        {
-          transaction: t
-        }
-      );
+      }
+    );
 
     await t.commit();
 
     return txn;
-
   } catch (err) {
-
     await t.rollback();
-
-    console.error(
-      "DEPOSIT ERROR:",
-      err
-    );
-
+    console.error("DEPOSIT ERROR:", err.message);
     throw err;
   }
 }
 
 /**
- * 💸 WITHDRAW
+ * WITHDRAW
  */
 async function withdrawMoney({
   account_number,
   amount,
-  user_id
+  user_id,
 }) {
-
   const t = await sequelize.transaction();
 
   try {
+    amount = validateAmount(amount);
 
-    /**
-     * VALIDATE AMOUNT
-     */
-    amount =
-      validateAmount(amount);
-
-    /**
-     * LIMIT
-     */
+    // Withdrawal max limit
     if (amount > 50000) {
-      throw new Error(
-        "Maximum withdrawal limit is ₹50,000."
-      );
+      throw new Error("Maximum withdrawal limit is ₹50,000.");
     }
 
-    /**
-     * ACCOUNT
-     */
-    const account =
-      await Account.findOne({
+    const account = await Account.findOne({
+      where: {
+        account_number,
+      },
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
 
-        where: {
-          account_number
-        },
+    validateOwnership(account, user_id);
 
-        transaction: t,
+    // Sufficient balance
+    if (
+      roundAmount(account.available_balance) <
+      amount
+    ) {
+      throw new Error("Insufficient balance.");
+    }
 
-        lock: t.LOCK.UPDATE,
-      });
-
-    /**
-     * VALIDATE OWNER
-     */
-    await validateOwnership(
-      account,
-      user_id
+    // Minimum balance check
+    const remainingBalance = roundAmount(
+      Number(account.available_balance) - amount
     );
 
-    /**
-     * BALANCE CHECK
-     */
-    if (
-      roundAmount(
-        account.available_balance
-      ) < amount
-    ) {
-      throw new Error(
-        "Insufficient balance."
-      );
-    }
+    const minimumBalance = Number(
+      account.min_balance || 0
+    );
 
-    /**
-     * MINIMUM BALANCE
-     */
-    const remainingBalance =
-      roundAmount(
-        Number(account.available_balance) -
-        amount
-      );
-
-    const minimumBalance =
-      Number(account.min_balance || 0);
-
-    if (
-      remainingBalance <
-      minimumBalance
-    ) {
+    if (remainingBalance < minimumBalance) {
       throw new Error(
         `Minimum balance of ₹${minimumBalance} must be maintained.`
       );
     }
 
-    /**
-     * USER
-     */
-    const user =
-      await User.findOne({
+    const recipientName = await getRecipientName(
+      account,
+      t
+    );
 
-        where: {
-          user_id:
-            account.user_id
-        },
+    // Update balance
+    account.balance = roundAmount(
+      Number(account.balance) - amount
+    );
 
+    account.available_balance = roundAmount(
+      Number(account.available_balance) - amount
+    );
+
+    await account.save({ transaction: t });
+
+    const txn = await Transaction.create(
+      {
+        from_account_id: account.account_id,
+        recipient_name: recipientName,
+        amount,
+        transaction_type: "withdraw",
+        status: "success",
+        reference_id: `TXN-${Date.now()}`,
+      },
+      {
         transaction: t,
-      });
-
-    /**
-     * EXACT DEBIT
-     */
-    account.balance =
-      roundAmount(
-        Number(account.balance) -
-        amount
-      );
-
-    account.available_balance =
-      roundAmount(
-        Number(account.available_balance) -
-        amount
-      );
-
-    /**
-     * SAVE
-     */
-    await account.save({
-      transaction: t
-    });
-
-    /**
-     * TRANSACTION
-     */
-    const txn =
-      await Transaction.create(
-
-        {
-          from_account_id:
-            account.account_id,
-
-          recipient_name:
-            user?.full_name ||
-            "Self",
-
-          amount,
-
-          transaction_type:
-            "withdraw",
-
-          status:
-            "success",
-
-          reference_id:
-            `TXN-${Date.now()}`
-        },
-
-        {
-          transaction: t
-        }
-      );
+      }
+    );
 
     await t.commit();
 
     return txn;
-
   } catch (err) {
-
     await t.rollback();
-
-    console.error(
-      "WITHDRAW ERROR:",
-      err
-    );
-
+    console.error("WITHDRAW ERROR:", err.message);
     throw err;
   }
 }
 
 /**
- * 📊 HISTORY
+ * HISTORY FOR ONE ACCOUNT
  */
-async function getTransactionHistory(
-  account_id
-) {
-
+async function getTransactionHistory(account_id) {
   return await Transaction.findAll({
-
     where: {
-
       [Op.or]: [
-
-        {
-          from_account_id:
-            account_id
-        },
-
-        {
-          to_account_id:
-            account_id
-        }
-      ]
+        { from_account_id: account_id },
+        { to_account_id: account_id },
+      ],
     },
-
-    order: [
-      ["created_at", "DESC"]
-    ],
+    order: [["created_at", "DESC"]],
   });
 }
 
 /**
- * 📄 ALL USER TXNS
+ * ALL USER TRANSACTIONS
  */
-async function getMyTransactions(
-  user_id
-) {
+async function getMyTransactions(user_id) {
+  const accounts = await Account.findAll({
+    where: {
+      user_id,
+    },
+  });
 
-  const accounts =
-    await Account.findAll({
+  const accountIds = accounts.map(
+    (acc) => acc.account_id
+  );
 
-      where: {
-        user_id
-      }
-    });
-
-  const accountIds =
-    accounts.map(
-      acc => acc.account_id
-    );
+  if (accountIds.length === 0) {
+    return [];
+  }
 
   return await Transaction.findAll({
-
     where: {
-
       [Op.or]: [
-
         {
-          from_account_id:
-            accountIds
+          from_account_id: {
+            [Op.in]: accountIds,
+          },
         },
-
         {
-          to_account_id:
-            accountIds
-        }
-      ]
+          to_account_id: {
+            [Op.in]: accountIds,
+          },
+        },
+      ],
     },
-
-    order: [
-      ["created_at", "DESC"]
-    ],
+    order: [["created_at", "DESC"]],
   });
 }
 
 module.exports = {
   initiateTransfer,
-  processInternalTransfer,
-  processIMPS,
-  processNEFT,
-  processRTGS,
+  processTransfer,
   depositMoney,
   withdrawMoney,
   getTransactionHistory,
