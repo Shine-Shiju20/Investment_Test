@@ -4,22 +4,40 @@ const router = express.Router();
 // controller
 const controller = require("../controllers/transactionController");
 
-// middlewares
-// const authMiddleware = require("../../../shared/middleware/authMiddleware");
+// middleware
 const verifyTransactionPin = require("../../../shared/middlewares/pinMiddleware");
 
-// 🔍 DEBUG (REMOVE LATER)
-console.log("transfer:", typeof controller.transfer);
-console.log("deposit:", typeof controller.deposit);
-console.log("withdraw:", typeof controller.withdraw);
-console.log("getHistory:", typeof controller.getHistory);
-console.log("authMiddleware:", typeof authMiddleware);
-console.log("verifyTransactionPin:", typeof verifyTransactionPin);
+// 🔁 TRANSFER
+router.post(
+  "/transfer",
+  verifyTransactionPin,
+  controller.transfer
+);
 
-// routes
-router.post("/transfer", verifyTransactionPin, controller.transfer);
-router.post("/deposit",  verifyTransactionPin, controller.deposit);
-router.post("/withdraw", verifyTransactionPin, controller.withdraw);
-router.get("/history/:account_id", controller.getHistory);
+// 💰 DEPOSIT
+router.post(
+  "/deposit",
+  verifyTransactionPin,
+  controller.deposit
+);
+
+// 💸 WITHDRAW
+router.post(
+  "/withdraw",
+  verifyTransactionPin,
+  controller.withdraw
+);
+
+// 📊 ACCOUNT HISTORY
+router.get(
+  "/history/:account_id",
+  controller.getHistory
+);
+
+// 📄 ALL USER TRANSACTIONS
+router.get(
+  "/all",
+  controller.getAllTransactions
+);
 
 module.exports = router;

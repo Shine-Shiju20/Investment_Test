@@ -4,9 +4,13 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
+const cookieParser = require("cookie-parser");
+
 const app = express();
 
-// CORS — allow frontend origin with credentials (cookies)
+/**
+ * CORS
+ */
 app.use(
   cors({
     origin: "http://localhost:3000",
@@ -14,52 +18,93 @@ app.use(
   })
 );
 
+/**
+ * DB
+ */
 const { sequelize } = require("../shared/config/db");
 
-// Import all models so Sequelize can register them
+/**
+ * IMPORT MODELS
+ */
 require("../services/user-service/models/user.model");
 require("../services/account-service/models/account.model");
 require("../services/auth-service/models/session.model");
 require("../services/auth-service/models/emailOtp.model");
 require("../services/audit-service/models/auditLog.model");
 require("../services/loan-service/models/loan.model");
+
 require("../services/investment-service/models/investmentProduct.model");
 require("../services/investment-service/models/portfolio.model");
 require("../services/investment-service/models/holding.model");
 require("../services/investment-service/models/investmentTransaction.model");
 require("../services/investment-service/models/navHistory.model");
+
+require("../services/transaction-service/models/transaction.model");
+
+/**
+ * AUTH
+ */
 const {
   authenticateToken,
 } = require("../shared/middlewares/authMiddleware");
+
+/**
+ * ROUTES
+ */
+const authRoutes = require("./Routes/auth.routes");
+
+const userRoutes = require("./Routes/user.routes");
+
+const accountRoutes = require(
+  "../services/account-service/routes/account.routes"
+);
+
+const transactionRoutes = require(
+  "../services/transaction-service/routes/transaction.routes"
+);
+
+const loanRoutes = require(
+  "../services/loan-service/routes/loan.routes"
+);
+
+const investmentRoutes = require(
+  "../services/investment-service/routes/investment.routes"
+);
+
 const creditCardRoutes = require(
   "../services/credit-card-service/routes/creditCard.routes"
 );
 
-// Routes
-const authRoutes = require("./Routes/auth.routes");
-const userRoutes = require("./Routes/user.routes");
-const accountRoutes = require(
-  "../services/account-service/routes/account.routes"
-);
-const transactionRoutes = require("../services/transaction-service/routes/transaction.routes");
-const loanRoutes = require("../services/loan-service/routes/loan.routes");
-const investmentRoutes = require(
-  "../services/investment-service/routes/investment.routes"
-);
-const cookieParser = require("cookie-parser");
-// Middleware
+/**
+ * MIDDLEWARES
+ */
 app.use(express.json());
+
 app.use(cookieParser());
 
-
-// Gateway routes
+/**
+ * ROUTES
+ */
 app.use("/auth", authRoutes);
-app.use("/user", authenticateToken , userRoutes);
+
+app.use(
+  "/user",
+  authenticateToken,
+  userRoutes
+);
+
 app.use(
   "/accounts",
   authenticateToken,
   accountRoutes
 );
+
+app.use(
+  "/transactions",
+  authenticateToken,
+  transactionRoutes
+);
+
 app.use(
   "/loans",
   authenticateToken,
@@ -71,38 +116,58 @@ app.use(
   authenticateToken,
   creditCardRoutes
 );
-app.use("/transactions", authenticateToken ,transactionRoutes); 
+
 app.use(
   "/investments",
   authenticateToken,
   investmentRoutes
 );
 
-// Initialize Loan Service Jobs
-const { initializeJobs } = require("../services/loan-service/index");
+/**
+ * INITIALIZE JOBS
+ */
+const {
+  initializeJobs
+} = require("../services/loan-service/index");
+
 initializeJobs();
 
-// Initialize Investment Service Jobs
 const {
   initializeJobs: initializeInvestmentJobs,
 } = require("../services/investment-service/index");
+
 initializeInvestmentJobs();
 
 /**
- * Sync database tables
- * Development use only
+ * DATABASE CONNECTION
+ * IMPORTANT:
+ * DO NOT USE alter:true
  */
 sequelize
-  .sync({ alter: true })
+  .authenticate()
   .then(() => {
-    console.log("Database tables created/synced successfully.");
 
-    const PORT = process.env.PORT || 5000;
+    console.log(
+      "Database connected successfully."
+    );
+
+    const PORT =
+      process.env.PORT || 5000;
 
     app.listen(PORT, () => {
-      console.log(`Gateway running on port ${PORT}`);
+
+      console.log(
+        `Gateway running on port ${PORT}`
+      );
+
     });
+
   })
   .catch((error) => {
-    console.error("Database sync failed:", error);
+
+    console.error(
+      "Database connection failed:",
+      error
+    );
+
   });

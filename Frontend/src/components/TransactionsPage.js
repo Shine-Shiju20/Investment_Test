@@ -5,16 +5,20 @@ import LoadingSpinner from './LoadingSpinner';
 import './TransactionsPage.css';
 
 const TransactionsPage = () => {
+
   const { showToast } = useAuth();
+
   const [accounts, setAccounts] = useState([]);
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [history, setHistory] = useState([]);
+
   const [loading, setLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+
   const [activeTab, setActiveTab] = useState('transfer');
 
-  // Form states
+  // FORM
   const [formData, setFormData] = useState({
     source_account_id: '',
     target_account_number: '',
@@ -24,26 +28,38 @@ const TransactionsPage = () => {
     description: ''
   });
 
+  /**
+   * FETCH ACCOUNTS
+   */
   const fetchAccounts = async () => {
+
     try {
+
       const res = await accountAPI.getMyAccounts();
 
       if (res.success) {
+
         setAccounts(res.data || []);
 
         if (res.data?.length > 0) {
+
           setFormData(prev => ({
             ...prev,
             source_account_id: res.data[0].account_id
           }));
 
-          setSelectedAccountId(res.data[0].account_id);
+          setSelectedAccountId(
+            res.data[0].account_id
+          );
         }
       }
 
     } catch (err) {
 
-      showToast('error', 'Failed to load accounts');
+      showToast(
+        'error',
+        'Failed to load accounts'
+      );
 
     } finally {
 
@@ -52,22 +68,33 @@ const TransactionsPage = () => {
     }
   };
 
-  const fetchHistory = async (id) => {
-    if (!id) return;
+  /**
+   * FETCH HISTORY
+   */
+  const fetchHistory = async (accountId) => {
+
+    if (!accountId) return;
 
     setHistoryLoading(true);
 
     try {
 
-      const res = await transactionAPI.getHistory(id);
+      const res =
+        await transactionAPI.getHistory(accountId);
 
       if (res.success) {
-        setHistory(res.data || []);
+
+        // ✅ FIXED
+        setHistory(res.transactions || []);
+
       }
 
     } catch (err) {
 
-      showToast('error', 'Failed to load transaction history');
+      showToast(
+        'error',
+        'Failed to load transaction history'
+      );
 
     } finally {
 
@@ -76,17 +103,29 @@ const TransactionsPage = () => {
     }
   };
 
+  /**
+   * INITIAL LOAD
+   */
   useEffect(() => {
     fetchAccounts();
   }, []);
 
+  /**
+   * ACCOUNT CHANGE
+   */
   useEffect(() => {
+
     if (selectedAccountId) {
       fetchHistory(selectedAccountId);
     }
+
   }, [selectedAccountId]);
 
+  /**
+   * INPUT CHANGE
+   */
   const handleInputChange = (e) => {
+
     const { name, value } = e.target;
 
     setFormData(prev => ({
@@ -95,15 +134,20 @@ const TransactionsPage = () => {
     }));
   };
 
+  /**
+   * SUBMIT
+   */
   const handleSubmit = async (e) => {
+
     e.preventDefault();
+
     setActionLoading(true);
 
     try {
 
       let res;
 
-      // ✅ Find selected account
+      // Selected account
       const selectedAccount = accounts.find(
         acc => acc.account_id === formData.source_account_id
       );
@@ -112,43 +156,69 @@ const TransactionsPage = () => {
         throw new Error('Selected account not found');
       }
 
-      // 🔁 TRANSFER
+      /**
+       * TRANSFER
+       */
       if (activeTab === 'transfer') {
 
         res = await transactionAPI.transfer({
-          from_account_number: selectedAccount.account_number,
-          to_account_number: formData.target_account_number,
-          amount: parseFloat(formData.amount),
-          transaction_type: formData.transfer_type,
-          transaction_pin: formData.transaction_pin,
-          description: formData.description
-        });
+          from_account_number:
+            selectedAccount.account_number,
 
+          to_account_number:
+            formData.target_account_number,
+
+          amount:
+            parseFloat(formData.amount),
+
+          transaction_type:
+            formData.transfer_type,
+
+          transaction_pin:
+            formData.transaction_pin,
+
+          description:
+            formData.description
+        });
       }
 
-      // 💰 DEPOSIT
+      /**
+       * DEPOSIT
+       */
       else if (activeTab === 'deposit') {
 
         res = await transactionAPI.deposit({
-          account_number: selectedAccount.account_number,
-          amount: parseFloat(formData.amount),
-          transaction_pin: formData.transaction_pin
-        });
+          account_number:
+            selectedAccount.account_number,
 
+          amount:
+            parseFloat(formData.amount),
+
+          transaction_pin:
+            formData.transaction_pin
+        });
       }
 
-      // 💸 WITHDRAW
+      /**
+       * WITHDRAW
+       */
       else if (activeTab === 'withdraw') {
 
         res = await transactionAPI.withdraw({
-          account_number: selectedAccount.account_number,
-          amount: parseFloat(formData.amount),
-          transaction_pin: formData.transaction_pin
-        });
+          account_number:
+            selectedAccount.account_number,
 
+          amount:
+            parseFloat(formData.amount),
+
+          transaction_pin:
+            formData.transaction_pin
+        });
       }
 
-      // ✅ SUCCESS
+      /**
+       * SUCCESS
+       */
       if (res?.success) {
 
         showToast(
@@ -156,7 +226,7 @@ const TransactionsPage = () => {
           `${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} successful!`
         );
 
-        // Reset non-account fields
+        // Reset
         setFormData(prev => ({
           ...prev,
           target_account_number: '',
@@ -165,14 +235,14 @@ const TransactionsPage = () => {
           description: ''
         }));
 
-        // Refresh data
+        // Refresh
         fetchAccounts();
         fetchHistory(formData.source_account_id);
       }
 
     } catch (err) {
 
-      console.error('TRANSACTION ERROR:', err);
+      console.error(err);
 
       showToast(
         'error',
@@ -189,40 +259,77 @@ const TransactionsPage = () => {
     }
   };
 
-  if (loading) return <LoadingSpinner text="Initializing transactions..." />;
+  /**
+   * LOADING
+   */
+  if (loading) {
+    return (
+      <LoadingSpinner
+        text="Initializing transactions..."
+      />
+    );
+  }
 
   return (
+
     <div className="transactions-page animate-fade">
+
+      {/* HEADER */}
       <div className="page-header">
+
         <h1>Transactions</h1>
-        <p>Transfer funds, deposit or withdraw money from your accounts</p>
+
+        <p>
+          Transfer funds, deposit or withdraw money
+        </p>
+
       </div>
 
+      {/* TABS */}
       <div className="transaction-tabs">
-        <button 
-          className={`tab-btn ${activeTab === 'transfer' ? 'active' : ''}`}
+
+        <button
+          className={`tab-btn ${
+            activeTab === 'transfer'
+              ? 'active'
+              : ''
+          }`}
           onClick={() => setActiveTab('transfer')}
         >
-          <i className="fas fa-exchange-alt" /> Transfer
+          <i className="fas fa-exchange-alt" />
+          Transfer
         </button>
 
-        <button 
-          className={`tab-btn ${activeTab === 'deposit' ? 'active' : ''}`}
+        <button
+          className={`tab-btn ${
+            activeTab === 'deposit'
+              ? 'active'
+              : ''
+          }`}
           onClick={() => setActiveTab('deposit')}
         >
-          <i className="fas fa-arrow-down" /> Deposit
+          <i className="fas fa-arrow-down" />
+          Deposit
         </button>
 
-        <button 
-          className={`tab-btn ${activeTab === 'withdraw' ? 'active' : ''}`}
+        <button
+          className={`tab-btn ${
+            activeTab === 'withdraw'
+              ? 'active'
+              : ''
+          }`}
           onClick={() => setActiveTab('withdraw')}
         >
-          <i className="fas fa-arrow-up" /> Withdraw
+          <i className="fas fa-arrow-up" />
+          Withdraw
         </button>
+
       </div>
 
+      {/* GRID */}
       <div className="transactions-grid">
 
+        {/* LEFT CARD */}
         <div className="transaction-card">
 
           <h2>
@@ -234,12 +341,15 @@ const TransactionsPage = () => {
                 : 'fa-arrow-up'
             }`} />
 
-            {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Funds
+            {activeTab.charAt(0).toUpperCase() +
+              activeTab.slice(1)} Funds
           </h2>
 
           <form onSubmit={handleSubmit}>
 
+            {/* ACCOUNT */}
             <div className="form-group">
+
               <label>Select Account</label>
 
               <select
@@ -247,24 +357,45 @@ const TransactionsPage = () => {
                 className="account-selector"
                 value={formData.source_account_id}
                 onChange={(e) => {
+
                   handleInputChange(e);
-                  setSelectedAccountId(e.target.value);
+
+                  setSelectedAccountId(
+                    e.target.value
+                  );
                 }}
                 required
               >
+
                 {accounts.map(acc => (
-                  <option key={acc.account_id} value={acc.account_id}>
-                    {acc.account_number} ({acc.account_type}) - ₹
-                    {parseFloat(acc.balance).toLocaleString()}
+
+                  <option
+                    key={acc.account_id}
+                    value={acc.account_id}
+                  >
+                    {acc.account_number}
+                    {' '}
+                    ({acc.account_type})
+                    {' '} - ₹
+                    {parseFloat(acc.balance)
+                      .toLocaleString()}
                   </option>
+
                 ))}
+
               </select>
+
             </div>
 
+            {/* TRANSFER FIELDS */}
             {activeTab === 'transfer' && (
               <>
+
                 <div className="form-group">
-                  <label>Recipient Account Number</label>
+
+                  <label>
+                    Recipient Account Number
+                  </label>
 
                   <input
                     type="text"
@@ -275,9 +406,11 @@ const TransactionsPage = () => {
                     onChange={handleInputChange}
                     required
                   />
+
                 </div>
 
                 <div className="form-group">
+
                   <label>Transfer Type</label>
 
                   <select
@@ -286,16 +419,32 @@ const TransactionsPage = () => {
                     value={formData.transfer_type}
                     onChange={handleInputChange}
                   >
-                    <option value="internal">Internal</option>
-                    <option value="imps">IMPS (Instant)</option>
-                    <option value="neft">NEFT (Same day)</option>
-                    <option value="rtgs">RTGS (High value)</option>
+                    <option value="internal">
+                      Internal
+                    </option>
+
+                    <option value="imps">
+                      IMPS
+                    </option>
+
+                    <option value="neft">
+                      NEFT
+                    </option>
+
+                    <option value="rtgs">
+                      RTGS
+                    </option>
+
                   </select>
+
                 </div>
+
               </>
             )}
 
+            {/* AMOUNT */}
             <div className="form-group">
+
               <label>Amount (₹)</label>
 
               <input
@@ -309,11 +458,15 @@ const TransactionsPage = () => {
                 onChange={handleInputChange}
                 required
               />
+
             </div>
 
+            {/* DESCRIPTION */}
             {activeTab === 'transfer' && (
+
               <div className="form-group">
-                <label>Description (Optional)</label>
+
+                <label>Description</label>
 
                 <input
                   type="text"
@@ -323,17 +476,21 @@ const TransactionsPage = () => {
                   value={formData.description}
                   onChange={handleInputChange}
                 />
+
               </div>
+
             )}
 
+            {/* PIN */}
             <div className="form-group">
+
               <label>Transaction PIN</label>
 
               <input
                 type="password"
                 name="transaction_pin"
                 className="input-field"
-                placeholder="Enter 4 or 6-digit PIN"
+                placeholder="Enter PIN"
                 maxLength="6"
                 value={formData.transaction_pin}
                 onChange={handleInputChange}
@@ -341,24 +498,140 @@ const TransactionsPage = () => {
               />
 
               <p className="pin-hint">
-                Enter your secure transaction PIN to authorize
+                Enter your secure transaction PIN
               </p>
+
             </div>
 
+            {/* BUTTON */}
             <button
               type="submit"
               className="btn btn-primary btn-block"
               disabled={actionLoading}
-              style={{ marginTop: '1rem' }}
             >
+
               {actionLoading
                 ? <LoadingSpinner size="sm" text="" />
-                : `Confirm ${activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}`}
+                : `Confirm ${
+                    activeTab.charAt(0)
+                      .toUpperCase() +
+                    activeTab.slice(1)
+                  }`
+              }
+
             </button>
 
           </form>
+
         </div>
+
+        {/* HISTORY */}
+        <div className="history-card">
+
+          <h2>
+            <i className="fas fa-history" />
+            Transaction Statement
+          </h2>
+
+          {historyLoading ? (
+
+            <LoadingSpinner
+              text="Loading transactions..."
+            />
+
+          ) : history.length === 0 ? (
+
+            <p>No transactions found</p>
+
+          ) : (
+
+            <div className="history-table-container">
+
+              <table className="history-table">
+
+                <thead>
+
+                  <tr>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Recipient</th>
+                    <th>Amount</th>
+                    <th>Status</th>
+                    <th>Reference</th>
+                  </tr>
+
+                </thead>
+
+                <tbody>
+
+                  {history.map((txn) => (
+
+                    <tr key={txn.transaction_id}>
+
+                      <td>
+                        {new Date(
+                          txn.created_at
+                        ).toLocaleString()}
+                      </td>
+
+                      <td
+                        style={{
+                          textTransform: 'uppercase'
+                        }}
+                      >
+                        {txn.transaction_type}
+                      </td>
+
+                      <td>
+                        {txn.recipient_name || '-'}
+                      </td>
+
+                      <td
+                        className={
+                          txn.from_account_id === selectedAccountId
+                            ? 'amount-debit'
+                            : 'amount-credit'
+                        }
+                      >
+                        {txn.from_account_id === selectedAccountId
+                          ? '-'
+                          : '+'}
+
+                        ₹
+                        {parseFloat(txn.amount)
+                          .toLocaleString()}
+                      </td>
+
+                      <td>
+
+                        <span
+                          className={`transaction-status status-${txn.status}`}
+                        >
+                          {txn.status}
+                        </span>
+
+                      </td>
+
+                      <td>
+                        {txn.reference_id}
+                      </td>
+
+                    </tr>
+
+                  ))}
+
+                </tbody>
+
+              </table>
+
+            </div>
+
+          )}
+
+        </div>
+
       </div>
+
     </div>
   );
 };

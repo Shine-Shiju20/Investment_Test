@@ -3,6 +3,7 @@ const {
   depositMoney,
   withdrawMoney,
   getTransactionHistory,
+  getMyTransactions,
 } = require("../services/transactionService");
 
 const {
@@ -14,10 +15,15 @@ const {
  */
 async function transfer(req, res) {
   try {
-    const { valid, errors } = validateTransactionInput(req.body);
+
+    const { valid, errors } =
+      validateTransactionInput(req.body);
 
     if (!valid) {
-      return res.status(400).json({ success: false, errors });
+      return res.status(400).json({
+        success: false,
+        errors,
+      });
     }
 
     const {
@@ -32,7 +38,7 @@ async function transfer(req, res) {
       to_account_number,
       amount: Number(amount),
       transaction_type,
-      user_id: req.user.user_id, // 🔐 ADDED
+      user_id: req.user.user_id,
     });
 
     return res.status(200).json({
@@ -42,10 +48,12 @@ async function transfer(req, res) {
     });
 
   } catch (err) {
+
     return res.status(500).json({
       success: false,
       message: err.message,
     });
+
   }
 }
 
@@ -54,12 +62,13 @@ async function transfer(req, res) {
  */
 async function deposit(req, res) {
   try {
+
     const { account_number, amount } = req.body;
 
     const txn = await depositMoney({
       account_number,
       amount: Number(amount),
-      user_id: req.user.user_id, // 🔐 ADDED
+      user_id: req.user.user_id,
     });
 
     return res.json({
@@ -69,7 +78,12 @@ async function deposit(req, res) {
     });
 
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+
+    return res.status(500).json({
+      success: false,
+      message: err.message
+    });
+
   }
 }
 
@@ -78,12 +92,13 @@ async function deposit(req, res) {
  */
 async function withdraw(req, res) {
   try {
+
     const { account_number, amount } = req.body;
 
     const txn = await withdrawMoney({
       account_number,
       amount: Number(amount),
-      user_id: req.user.user_id, // 🔐 ADDED
+      user_id: req.user.user_id,
     });
 
     return res.json({
@@ -93,18 +108,25 @@ async function withdraw(req, res) {
     });
 
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+
+    return res.status(500).json({
+      success: false,
+      message: err.message
+    });
+
   }
 }
 
 /**
- * 📊 HISTORY
+ * 📊 ACCOUNT HISTORY
  */
 async function getHistory(req, res) {
   try {
+
     const { account_id } = req.params;
 
-    const data = await getTransactionHistory(account_id);
+    const data =
+      await getTransactionHistory(account_id);
 
     return res.json({
       success: true,
@@ -112,7 +134,37 @@ async function getHistory(req, res) {
     });
 
   } catch (err) {
-    return res.status(500).json({ success: false, message: err.message });
+
+    return res.status(500).json({
+      success: false,
+      message: err.message
+    });
+
+  }
+}
+
+/**
+ * 📄 ALL USER TRANSACTIONS
+ */
+async function getAllTransactions(req, res) {
+  try {
+
+    const data = await getMyTransactions(
+      req.user.user_id
+    );
+
+    return res.json({
+      success: true,
+      transactions: data,
+    });
+
+  } catch (err) {
+
+    return res.status(500).json({
+      success: false,
+      message: err.message,
+    });
+
   }
 }
 
@@ -121,4 +173,5 @@ module.exports = {
   deposit,
   withdraw,
   getHistory,
+  getAllTransactions,
 };

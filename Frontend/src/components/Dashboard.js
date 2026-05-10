@@ -32,7 +32,7 @@ const Dashboard = () => {
     <div className="dashboard">
       {/* Welcome */}
       <div className="page-header">
-        <h1>Welcome back, {currentUser?.full_name?.split(' ')[0]} 👋</h1>
+        <h1>Welcome back, {currentUser?.full_name?.split(' ')[0]} </h1>
         <p>Here's your financial overview</p>
       </div>
 
